@@ -48,6 +48,33 @@
     }
 )
 
+(define-map enrollments
+    {
+        student: principal,
+        course-id: uint,
+    }
+    {
+        enrolled-at: uint,
+        completed: bool,
+        rating: (optional uint),
+        progress: uint,
+        last-accessed: uint,
+        completion-certificate: (optional (string-ascii 64)),
+    }
+)
+
+(define-map student-profiles
+    { student: principal }
+    {
+        name: (string-ascii 50),
+        completed-courses: uint,
+        total-spent: uint,
+        achievements: (list 10 (string-ascii 50)),
+        joined-at: uint,
+        preferences: (list 5 (string-ascii 50)),
+    }
+)
+
 ;; Read-only functions
 (define-read-only (get-course (course-id uint))
     (map-get? courses { course-id: course-id })
@@ -57,7 +84,91 @@
     (map-get? instructor-details { instructor: instructor })
 )
 
+(define-read-only (get-enrollment
+        (student principal)
+        (course-id uint)
+    )
+    (map-get? enrollments {
+        student: student,
+        course-id: course-id,
+    })
+)
+
+(define-read-only (get-student-profile (student principal))
+    (map-get? student-profiles { student: student })
+)
+
 ;; Public functions
+
+;; Student Profile Management
+(define-public (create-student-profile (name (string-ascii 50)))
+    (let ((existing-profile (get-student-profile tx-sender)))
+        (if (is-some existing-profile)
+            err-already-exists
+            (ok (map-set student-profiles { student: tx-sender } {
+                name: name,
+                completed-courses: u0,
+                total-spent: u0,
+                achievements: (list),
+                joined-at: stacks-block-height,
+                preferences: (list),
+            }))
+        )
+    )
+)
+
+(define-public (update-student-preferences (preferences (list 5 (string-ascii 50))))
+    (let ((profile (get-student-profile tx-sender)))
+        (match profile
+            profile-data (ok (map-set student-profiles { student: tx-sender }
+                (merge profile-data { preferences: preferences })
+            ))
+            err-not-found
+        )
+    )
+)
+
+;; Course Progress Tracking
+(define-public (update-progress
+        (course-id uint)
+        (progress uint)
+    )
+    (let ((enrollment (get-enrollment tx-sender course-id)))
+        (match enrollment
+            enrollment-data (ok (map-set enrollments {
+                student: tx-sender,
+                course-id: course-id,
+            }
+                (merge enrollment-data {
+                    progress: progress,
+                    last-accessed: stacks-block-height,
+                })
+            ))
+            err-not-found
+        )
+    )
+)
+
+;; Certificate Generation
+(define-public (generate-certificate
+        (course-id uint)
+        (certificate-hash (string-ascii 64))
+    )
+    (let ((enrollment (get-enrollment tx-sender course-id)))
+        (match enrollment
+            enrollment-data (if (get completed enrollment-data)
+                (ok (map-set enrollments {
+                    student: tx-sender,
+                    course-id: course-id,
+                }
+                    (merge enrollment-data { completion-certificate: (some certificate-hash) })
+                ))
+                err-unauthorized
+            )
+            err-not-found
+        )
+    )
+)
 
 ;; Course Management
 (define-public (create-course
